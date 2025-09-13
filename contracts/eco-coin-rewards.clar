@@ -13,6 +13,8 @@
 (define-constant ERR_TREASURY_EMPTY (err u105))
 (define-constant ERR_INSUFFICIENT_BALANCE (err u106))
 (define-constant ERR_INSUFFICIENT_STX (err u107))
+(define-constant ERR_INVALID_PRINCIPAL (err u108))
+(define-constant ERR_INVALID_STRING (err u109))
 
 ;; --- Token and Data Definitions ---
 
@@ -47,6 +49,12 @@
 (define-private (is-center (center principal)) 
   (is-some (map-get? certified-recycling-centers center)))
 
+(define-private (is-valid-string (str (string-ascii 50)))
+  (and (> (len str) u0) (<= (len str) u50)))
+
+(define-private (is-valid-uri (uri (string-utf8 256)))
+  (<= (len uri) u256))
+
 ;; --- Administrative Functions ---
 
 ;; Add a new certified recycling center.
@@ -55,6 +63,7 @@
 (define-public (add-center (center-principal principal) (center-name (string-ascii 50)))
   (begin
     (asserts! (is-owner) ERR_UNAUTHORIZED)
+    (asserts! (is-valid-string center-name) ERR_INVALID_STRING)
     (ok (map-set certified-recycling-centers center-principal { name: center-name }))))
 
 ;; Remove a certified recycling center.
@@ -68,6 +77,7 @@
 (define-public (set-token-uri (new-uri (string-utf8 256)))
   (begin
     (asserts! (is-owner) ERR_UNAUTHORIZED)
+    (asserts! (is-valid-uri new-uri) ERR_INVALID_STRING)
     (ok (var-set token-uri new-uri))))
 
 ;; --- Sponsor and Treasury Functions ---
@@ -102,23 +112,24 @@
 ;; The user calls this function to process their claim and mint Eco-Coins.
 ;; @param center: The principal of the center that authorized the claim.
 (define-public (process-my-claim (center principal))
-  (let ((claim-data (unwrap! (map-get? pending-claims { user: tx-sender, center: center }) ERR_CLAIM_NOT_FOUND)))
-    (let ((claim-id (get claim-id claim-data))
-          (amount (get amount claim-data)))
-      (asserts! (not (default-to false (map-get? processed-claims claim-id))) ERR_CLAIM_ALREADY_PROCESSED)
+  (begin
+    (let ((claim-data (unwrap! (map-get? pending-claims { user: tx-sender, center: center }) ERR_CLAIM_NOT_FOUND)))
+      (let ((claim-id (get claim-id claim-data))
+            (amount (get amount claim-data)))
+        (asserts! (not (default-to false (map-get? processed-claims claim-id))) ERR_CLAIM_ALREADY_PROCESSED)
 
-      ;; Mint the tokens to the user
-      (try! (ft-mint? eco-coin amount tx-sender))
+        ;; Mint the tokens to the user
+        (try! (ft-mint? eco-coin amount tx-sender))
 
-      ;; Update total supply
-      (var-set total-supply (+ (var-get total-supply) amount))
+        ;; Update total supply
+        (var-set total-supply (+ (var-get total-supply) amount))
 
-      ;; Mark claim as processed and delete the pending entry
-      (map-set processed-claims claim-id true)
-      (map-delete pending-claims { user: tx-sender, center: center })
+        ;; Mark claim as processed and delete the pending entry
+        (map-set processed-claims claim-id true)
+        (map-delete pending-claims { user: tx-sender, center: center })
 
-      (print { type: "claim-processed", user: tx-sender, amount: amount, claim-id: claim-id })
-      (ok true))))
+        (print { type: "claim-processed", user: tx-sender, amount: amount, claim-id: claim-id })
+        (ok true)))))
 
 ;; A function to demonstrate token utility, e.g., redeeming for STX from the treasury.
 ;; @param amount: The amount of eco-coins to redeem.
@@ -153,8 +164,6 @@
   (begin
     (asserts! (or (is-eq tx-sender sender) (is-eq contract-caller sender)) ERR_UNAUTHORIZED)
     (asserts! (> amount u0) ERR_INVALID_AMOUNT)
-    (asserts! (is-valid-principal sender) ERR_INVALID_PRINCIPAL)
-    (asserts! (is-valid-principal recipient) ERR_INVALID_PRINCIPAL)
     (asserts! (not (is-eq sender recipient)) ERR_INVALID_PRINCIPAL)
     (ft-transfer? eco-coin amount sender recipient)))
 
